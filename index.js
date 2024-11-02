@@ -4,6 +4,7 @@ const axios = require('axios');
 dotenv = require('dotenv');
 const TelegramBot = require('node-telegram-bot-api');
 const NodeCache = require('node-cache');
+const Bottleneck = require('bottleneck');
 
 // Load environment variables from .env file
 dotenv.config();
@@ -42,6 +43,12 @@ app.post(`/bot${TELEGRAM_TOKEN}`, (req, res) => {
 const addresses = {};
 const logs = [];
 const cache = new NodeCache({ stdTTL: 300 }); // Cache with 5 minutes TTL
+
+// Create a limiter to throttle requests
+const limiter = new Bottleneck({
+  minTime: 100, // 100ms between requests to keep within 10 RPS
+  maxConcurrent: 1,
+});
 
 // Function to get CAD exchange rate
 const getCadExchangeRate = async () => {
@@ -168,8 +175,8 @@ bot.on('message', (msg) => {
 bot.onText(/\/balances/, async (msg) => {
   const chatId = msg.chat.id;
   const numberOfAddresses = Object.keys(addresses).length;
-  const estimatedTime = numberOfAddresses * 8;
-  bot.sendMessage(chatId, `Calculating Balance: ${estimatedTime} seconds`);
+  const estimatedTime = numberOfAddresses * 2;
+  bot.sendMessage(chatId, `Calculating Balance:👩‍💻 est. ${estimatedTime} seconds 👩‍💻`);
 
   logs.push("Balances command received");
   console.log("Balances command received");
@@ -245,33 +252,23 @@ const fetchWalletBalances = async () => {
     totalBalance[address.toLowerCase()] = 0;
   }
 
-  // Batch addresses for API requests
-  const addressChunks = chunkArray(Object.keys(addresses), 20); // Split addresses into chunks of 20 for batch processing
-
   for (let baseUrlInfo of baseUrls) {
-    for (let chunk of addressChunks) {
-      const cacheKey = `${baseUrlInfo.url}_${chunk.join()}`;
-      const cachedResult = cache.get(cacheKey);
+    for (let address of Object.keys(addresses)) {
+      try {
+        const urlWithAddress = baseUrlInfo.url.replace("{}", address);
+        console.log(`Making API call to: ${urlWithAddress}`);
+        const response = await limiter.schedule(() => axios.get(urlWithAddress));
+        console.log(`API response from ${urlWithAddress}:`, JSON.stringify(response.data, null, 2));
 
-      if (cachedResult) {
-        console.log(`Cache hit for ${cacheKey}`);
-        updateBalances(cachedResult, chunk, totalBalance, totalETH, baseUrlInfo);
-      } else {
-        try {
-          const response = await axios.get(baseUrlInfo.url.replace("{}", chunk.join(',')));
-          console.log(`API response from ${baseUrlInfo.url}:`, response.data); // Log entire response for debugging
-
-          if (response.status === 200 && response.data.result) {
-            cache.set(cacheKey, response.data.result); // Cache the result for 5 minutes
-            updateBalances(response.data.result, chunk, totalBalance, totalETH, baseUrlInfo);
-          } else {
-            logs.push(`Invalid response structure from ${baseUrlInfo.url}`);
-            console.error(`Invalid response structure from ${baseUrlInfo.url}`);
-          }
-        } catch (error) {
-          logs.push(`Failed to fetch data for addresses ${chunk} from ${baseUrlInfo.url}: ${error.message}`);
-          console.error(`Failed to fetch data for addresses ${chunk} from ${baseUrlInfo.url}: ${error.message}`);
+        if (response.status === 200 && response.data && response.data.result) {
+          totalETH = updateBalances(response.data.result, [address], totalBalance, totalETH, baseUrlInfo);
+        } else {
+          logs.push(`Invalid or empty response from ${urlWithAddress}`);
+          console.error(`Invalid or empty response from ${urlWithAddress}`);
         }
+      } catch (error) {
+        logs.push(`Failed to fetch data for address ${address} from ${baseUrlInfo.url}: ${error.message}`);
+        console.error(`Failed to fetch data for address ${address} from ${baseUrlInfo.url}: ${error.message}`);
       }
     }
   }
@@ -324,6 +321,7 @@ const updateBalances = (result, chunk, totalBalance, totalETH, baseUrlInfo) => {
     logs.push(`Unexpected response structure`);
     console.error(`Unexpected response structure`);
   }
+  return totalETH;
 };
 
 // Helper function to chunk array into smaller arrays
@@ -346,8 +344,8 @@ app.get('/', (req, res) => {
 });
 
 // Start the server LOCAL
- app.listen(PORT, () => {
-   console.log(`Server is running on port ${PORT}`);
+app.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
 });
 
 // Vercel export
