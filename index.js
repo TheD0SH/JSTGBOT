@@ -70,20 +70,25 @@ const limiter = new Bottleneck({
   maxConcurrent: 1,
 });
 
-// Function to get CAD exchange rate
-const getCadExchangeRate = async () => {
-  try {
-    const response = await axios.get("https://api.currencyfreaks.com/v2.0/rates/latest?apikey=04b50b2b36b74a10849e152572e95483", { timeout: 10000 });
-    if (response.status === 200 && response.data.rates && response.data.rates.CAD) {
-      const cadExchangeRate = parseFloat(response.data.rates.CAD);
-      logs.push(`Current CAD Exchange Rate: 1 USD = ${cadExchangeRate.toFixed(2)} CAD`);
-      return cadExchangeRate;
+// Function to get CAD exchange rate with retry logic
+const getCadExchangeRate = async (attempts = 3) => {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const response = await axios.get("https://api.currencyfreaks.com/v2.0/rates/latest?apikey=04b50b2b36b74a10849e152572e95483", { timeout: 5000 });
+      if (response.status === 200 && response.data.rates && response.data.rates.CAD) {
+        const cadExchangeRate = parseFloat(response.data.rates.CAD);
+        logs.push(`Current CAD Exchange Rate: 1 USD = ${cadExchangeRate.toFixed(2)} CAD`);
+        return cadExchangeRate;
+      }
+    } catch (error) {
+      logs.push(`Failed to fetch CAD exchange rate (Attempt ${i + 1}): ${error.message}`);
+      console.error(`Failed to fetch CAD exchange rate (Attempt ${i + 1}): ${error.message}`);
+      await new Promise(resolve => setTimeout(resolve, 2000)); // wait 2 seconds before retrying
     }
-  } catch (error) {
-    logs.push(`Failed to fetch CAD exchange rate: ${error.message}`);
-    console.error(`Failed to fetch CAD exchange rate: ${error.message}`);
   }
-  return 0;
+  logs.push("Failed to fetch CAD exchange rate after multiple attempts. Using fallback value: 1.25 CAD");
+  console.error("Failed to fetch CAD exchange rate after multiple attempts. Using fallback value: 1.25 CAD");
+  return 1.25; // fallback value
 };
 
 let cadExchangeRate = 0;
@@ -93,19 +98,26 @@ getCadExchangeRate().then((rate) => {
 
 let ethPriceUsd = 0;
 
-// Updated function to get ETH price in USD
-const getEthPriceInUsd = async () => {
-  try {
-    const response = await axios.get("https://eth.blockscout.com/api/v2/stats", { timeout: 10000 });
-    if (response.status === 200 && response.data && response.data.coin_price) {
-      ethPriceUsd = parseFloat(response.data.coin_price);
-      logs.push(`Current ETH Price in USD: $${ethPriceUsd.toFixed(2)}`);
-      console.log(`Current ETH Price in USD: $${ethPriceUsd.toFixed(2)}`);
+// Updated function to get ETH price in USD with retry logic
+const getEthPriceInUsd = async (attempts = 3) => {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const response = await axios.get("https://eth.blockscout.com/api/v2/stats", { timeout: 5000 });
+      if (response.status === 200 && response.data && response.data.coin_price) {
+        ethPriceUsd = parseFloat(response.data.coin_price);
+        logs.push(`Current ETH Price in USD: $${ethPriceUsd.toFixed(2)}`);
+        console.log(`Current ETH Price in USD: $${ethPriceUsd.toFixed(2)}`);
+        return;
+      }
+    } catch (error) {
+      logs.push(`Failed to fetch ETH price in USD (Attempt ${i + 1}): ${error.message}`);
+      console.error(`Failed to fetch ETH price in USD (Attempt ${i + 1}): ${error.message}`);
+      await new Promise(resolve => setTimeout(resolve, 2000)); // wait 2 seconds before retrying
     }
-  } catch (error) {
-    logs.push(`Failed to fetch ETH price in USD: ${error.message}`);
-    console.error(`Failed to fetch ETH price in USD: ${error.message}`);
   }
+  logs.push("Failed to fetch ETH price in USD after multiple attempts. Using fallback value: $2000");
+  console.error("Failed to fetch ETH price in USD after multiple attempts. Using fallback value: $2000");
+  ethPriceUsd = 2000; // fallback value
 };
 
 getEthPriceInUsd();
