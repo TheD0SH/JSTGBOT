@@ -19,18 +19,24 @@ const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const URL = process.env.URL;
 
 // Create a Telegram bot instance without polling
-const bot = new TelegramBot(TELEGRAM_TOKEN);
+const bot = new TelegramBot(TELEGRAM_TOKEN, { webHook: true });
+bot.setWebHook(`${URL}/bot${TELEGRAM_TOKEN}`);
 
 // Function to set up the webhook with the Telegram API
-const setTelegramWebhook = async () => {
-  try {
-    const response = await axios.post(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/setWebhook`, {
-      url: `${URL}/bot${TELEGRAM_TOKEN}`
-    });
-    console.log("Webhook set successfully:", response.data);
-  } catch (error) {
-    console.error("Error setting webhook:", error.message);
+const setTelegramWebhook = async (attempts = 3) => {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const response = await axios.post(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/setWebhook`, {
+        url: `${URL}/bot${TELEGRAM_TOKEN}`
+      });
+      console.log("Webhook set successfully:", response.data);
+      return; // exit if successful
+    } catch (error) {
+      console.error(`Error setting webhook (Attempt ${i + 1}):`, error.message);
+      await new Promise(resolve => setTimeout(resolve, 5000)); // wait 5 seconds before retrying
+    }
   }
+  console.error("Failed to set webhook after multiple attempts.");
 };
 
 // Call the webhook setup function after exporting the app
@@ -67,7 +73,7 @@ const limiter = new Bottleneck({
 // Function to get CAD exchange rate
 const getCadExchangeRate = async () => {
   try {
-    const response = await axios.get("https://api.currencyfreaks.com/v2.0/rates/latest?apikey=04b50b2b36b74a10849e152572e95483");
+    const response = await axios.get("https://api.currencyfreaks.com/v2.0/rates/latest?apikey=04b50b2b36b74a10849e152572e95483", { timeout: 10000 });
     if (response.status === 200 && response.data.rates && response.data.rates.CAD) {
       const cadExchangeRate = parseFloat(response.data.rates.CAD);
       logs.push(`Current CAD Exchange Rate: 1 USD = ${cadExchangeRate.toFixed(2)} CAD`);
@@ -75,6 +81,7 @@ const getCadExchangeRate = async () => {
     }
   } catch (error) {
     logs.push(`Failed to fetch CAD exchange rate: ${error.message}`);
+    console.error(`Failed to fetch CAD exchange rate: ${error.message}`);
   }
   return 0;
 };
@@ -89,7 +96,7 @@ let ethPriceUsd = 0;
 // Updated function to get ETH price in USD
 const getEthPriceInUsd = async () => {
   try {
-    const response = await axios.get("https://eth.blockscout.com/api/v2/stats");
+    const response = await axios.get("https://eth.blockscout.com/api/v2/stats", { timeout: 10000 });
     if (response.status === 200 && response.data && response.data.coin_price) {
       ethPriceUsd = parseFloat(response.data.coin_price);
       logs.push(`Current ETH Price in USD: $${ethPriceUsd.toFixed(2)}`);
@@ -383,5 +390,5 @@ app.get('/', (req, res) => {
   res.send('Welcome to the Telegram Bot Server');
 });
 
-// Vercel export1
+// Vercel export
 module.exports = app;
