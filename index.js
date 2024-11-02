@@ -1,7 +1,7 @@
 // Import necessary modules
 const express = require('express');
 const axios = require('axios');
-const dotenv = require('dotenv');
+dotenv = require('dotenv');
 const TelegramBot = require('node-telegram-bot-api');
 
 // Load environment variables from .env file
@@ -9,13 +9,24 @@ dotenv.config();
 
 // Express app setup
 const app = express();
+app.use(express.json());
 const PORT = process.env.PORT || 3000;
 
 // Telegram Bot Token
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
+const URL = process.env.URL;
 
-// Create a Telegram bot instance
-const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true, baseApiUrl: 'https://api.telegram.org', request: { rejectUnauthorized: false } });
+// Create a Telegram bot instance without polling
+const bot = new TelegramBot(TELEGRAM_TOKEN);
+
+// Set up the webhook with the Telegram API
+bot.setWebHook(`${URL}/bot${TELEGRAM_TOKEN}`);
+
+// Handle incoming webhook updates
+app.post(`/bot${TELEGRAM_TOKEN}`, (req, res) => {
+  bot.processUpdate(req.body);
+  res.sendStatus(200);
+});
 
 // In-memory storage for wallet addresses and logs
 const addresses = {};
@@ -157,20 +168,12 @@ bot.onText(/\/balances/, async (msg) => {
 });
 
 // Enhanced logging for Telegram bot setup
-bot.on('polling_error', (error) => {
-  console.error(`Polling error: ${error.code}, ${error.message}`);
-});
-
-bot.on('webhook_error', (error) => {
-  console.error(`Webhook error: ${error.message}`);
-});
-
 bot.on('error', (error) => {
   console.error(`General error: ${error.message}`);
 });
 
 // Log when bot starts successfully
-console.log(`Bot is polling for updates`);
+console.log(`Bot is set up with webhook for updates`);
 
 // Function to fetch wallet balances
 const fetchWalletBalances = async () => {
@@ -303,5 +306,5 @@ app.get('/', (req, res) => {
 //   console.log(`Server is running on port ${PORT}`);
 // });
 
-// Vercel 
+// Vercel export
 module.exports = app;
