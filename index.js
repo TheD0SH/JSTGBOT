@@ -19,44 +19,24 @@ const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const URL = process.env.URL;
 
 // Create a Telegram bot instance without polling
-const bot = new TelegramBot(TELEGRAM_TOKEN, { webHook: true });
-bot.setWebHook(`${URL}/bot${TELEGRAM_TOKEN}`);
+const bot = new TelegramBot(TELEGRAM_TOKEN);
 
-// Function to set up the webhook with the Telegram API
-const setTelegramWebhook = async (attempts = 3) => {
-  for (let i = 0; i < attempts; i++) {
-    try {
-      const response = await axios.post(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/setWebhook`, {
-        url: `${URL}/bot${TELEGRAM_TOKEN}`
-      });
-      console.log("Webhook set successfully:", response.data);
-      return; // exit if successful
-    } catch (error) {
-      console.error(`Error setting webhook (Attempt ${i + 1}):`, error.message);
-      await new Promise(resolve => setTimeout(resolve, 5000)); // wait 5 seconds before retrying
-    }
-  }
-  console.error("Failed to set webhook after multiple attempts.");
-};
-
-// Call the webhook setup function after exporting the app
-setTelegramWebhook();
+// Set up the webhook with the Telegram API
+axios.post(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/setWebhook`, {
+  url: `${URL}/bot${TELEGRAM_TOKEN}`
+})
+.then((response) => {
+  console.log("Webhook set successfully:", response.data);
+})
+.catch((error) => {
+  console.error("Error setting webhook:", error.message);
+});
 
 // Handle incoming webhook updates
 app.post(`/bot${TELEGRAM_TOKEN}`, (req, res) => {
-  console.log("Incoming webhook received:", JSON.stringify(req.body, null, 2)); // Debug log to verify webhook receipt
-  if (req.body.message) {
-    console.log("Message received from Telegram:", req.body.message);
-  } else {
-    console.warn("Webhook received but no message found in payload:", JSON.stringify(req.body, null, 2));
-  }
-  try {
-    bot.processUpdate(req.body);
-    res.sendStatus(200);
-  } catch (error) {
-    console.error("Error processing update:", error.message);
-    res.sendStatus(500);
-  }
+  console.log("Incoming webhook received:", req.body); // Debug log to verify webhook receipt
+  bot.processUpdate(req.body);
+  res.sendStatus(200);
 });
 
 // In-memory storage for wallet addresses and logs
@@ -70,25 +50,19 @@ const limiter = new Bottleneck({
   maxConcurrent: 1,
 });
 
-// Function to get CAD exchange rate with retry logic
-const getCadExchangeRate = async (attempts = 3) => {
-  for (let i = 0; i < attempts; i++) {
-    try {
-      const response = await axios.get("https://api.currencyfreaks.com/v2.0/rates/latest?apikey=04b50b2b36b74a10849e152572e95483", { timeout: 5000 });
-      if (response.status === 200 && response.data.rates && response.data.rates.CAD) {
-        const cadExchangeRate = parseFloat(response.data.rates.CAD);
-        logs.push(`Current CAD Exchange Rate: 1 USD = ${cadExchangeRate.toFixed(2)} CAD`);
-        return cadExchangeRate;
-      }
-    } catch (error) {
-      logs.push(`Failed to fetch CAD exchange rate (Attempt ${i + 1}): ${error.message}`);
-      console.error(`Failed to fetch CAD exchange rate (Attempt ${i + 1}): ${error.message}`);
-      await new Promise(resolve => setTimeout(resolve, 2000)); // wait 2 seconds before retrying
+// Function to get CAD exchange rate
+const getCadExchangeRate = async () => {
+  try {
+    const response = await axios.get("https://api.currencyfreaks.com/v2.0/rates/latest?apikey=04b50b2b36b74a10849e152572e95483");
+    if (response.status === 200 && response.data.rates && response.data.rates.CAD) {
+      const cadExchangeRate = parseFloat(response.data.rates.CAD);
+      logs.push(`Current CAD Exchange Rate: 1 USD = ${cadExchangeRate.toFixed(2)} CAD`);
+      return cadExchangeRate;
     }
+  } catch (error) {
+    logs.push(`Failed to fetch CAD exchange rate: ${error.message}`);
   }
-  logs.push("Failed to fetch CAD exchange rate after multiple attempts. Using fallback value: 1.25 CAD");
-  console.error("Failed to fetch CAD exchange rate after multiple attempts. Using fallback value: 1.25 CAD");
-  return 1.25; // fallback value
+  return 0;
 };
 
 let cadExchangeRate = 0;
@@ -98,26 +72,19 @@ getCadExchangeRate().then((rate) => {
 
 let ethPriceUsd = 0;
 
-// Updated function to get ETH price in USD with retry logic
-const getEthPriceInUsd = async (attempts = 3) => {
-  for (let i = 0; i < attempts; i++) {
-    try {
-      const response = await axios.get("https://eth.blockscout.com/api/v2/stats", { timeout: 5000 });
-      if (response.status === 200 && response.data && response.data.coin_price) {
-        ethPriceUsd = parseFloat(response.data.coin_price);
-        logs.push(`Current ETH Price in USD: $${ethPriceUsd.toFixed(2)}`);
-        console.log(`Current ETH Price in USD: $${ethPriceUsd.toFixed(2)}`);
-        return;
-      }
-    } catch (error) {
-      logs.push(`Failed to fetch ETH price in USD (Attempt ${i + 1}): ${error.message}`);
-      console.error(`Failed to fetch ETH price in USD (Attempt ${i + 1}): ${error.message}`);
-      await new Promise(resolve => setTimeout(resolve, 2000)); // wait 2 seconds before retrying
+// Updated function to get ETH price in USD
+const getEthPriceInUsd = async () => {
+  try {
+    const response = await axios.get("https://eth.blockscout.com/api/v2/stats");
+    if (response.status === 200 && response.data && response.data.coin_price) {
+      ethPriceUsd = parseFloat(response.data.coin_price);
+      logs.push(`Current ETH Price in USD: $${ethPriceUsd.toFixed(2)}`);
+      console.log(`Current ETH Price in USD: $${ethPriceUsd.toFixed(2)}`);
     }
+  } catch (error) {
+    logs.push(`Failed to fetch ETH price in USD: ${error.message}`);
+    console.error(`Failed to fetch ETH price in USD: ${error.message}`);
   }
-  logs.push("Failed to fetch ETH price in USD after multiple attempts. Using fallback value: $2000");
-  console.error("Failed to fetch ETH price in USD after multiple attempts. Using fallback value: $2000");
-  ethPriceUsd = 2000; // fallback value
 };
 
 getEthPriceInUsd();
@@ -134,35 +101,25 @@ bot.onText(/\/start/, (msg) => {
                        "/addbulk - Add wallets in bulk. Format: <address> <name> pairs separated by tabs or new lines\n" +
                        "/balances - Get the latest balance report of all added wallets\n" +
                        "/logs - View activity logs (admin only).";
-  bot.sendMessage(chatId, startMessage).then(() => {
-    logs.push("Start command received and replied successfully");
-    console.log("Start command processed successfully");
-  }).catch((error) => {
-    console.error("Failed to send start command response:", error.message);
-  });
+  bot.sendMessage(chatId, startMessage);
+  logs.push("Start command received and replied successfully");
 });
 
 // Command handler for adding a wallet
 bot.onText(/\/addwallet/, (msg) => {
   chatIdForWallet = msg.chat.id;
-  bot.sendMessage(chatIdForWallet, "Please provide the wallet address and name in the format: <address> <name>").then(() => {
-    logs.push("Add wallet request message sent");
-    waitingForWalletInfo = true;
-  }).catch((error) => {
-    console.error("Failed to send add wallet request message:", error.message);
-  });
+  bot.sendMessage(chatIdForWallet, "Please provide the wallet address and name in the format: <address> <name>");
+  logs.push("Add wallet request message sent");
+  waitingForWalletInfo = true;
 });
 
 // Command handler for adding wallets in bulk
 bot.onText(/\/addbulk/, (msg) => {
   const chatId = msg.chat.id;
-  bot.sendMessage(chatId, "Please provide the wallet address and name pairs, separated by tabs or new lines.").then(() => {
-    waitingForWalletInfo = true;
-    chatIdForWallet = chatId;
-    logs.push("Add bulk wallets request message sent");
-  }).catch((error) => {
-    console.error("Failed to send add bulk wallets request message:", error.message);
-  });
+  bot.sendMessage(chatId, "Please provide the wallet address and name pairs, separated by tabs or new lines.");
+  waitingForWalletInfo = true;
+  chatIdForWallet = chatId;
+  logs.push("Add bulk wallets request message sent");
 });
 
 // Handle wallet input only when requested
@@ -188,37 +145,27 @@ bot.on('message', (msg) => {
         console.warn(`Invalid address format provided in bulk: ${line}`);
       }
     });
-    bot.sendMessage(chatIdForWallet, `Bulk wallets have been added successfully.`).then(() => {
-      waitingForWalletInfo = false;
-      chatIdForWallet = null;
-    }).catch((error) => {
-      console.error("Failed to send bulk wallets added confirmation:", error.message);
-    });
+    bot.sendMessage(chatIdForWallet, `Bulk wallets have been added successfully.`);
+    waitingForWalletInfo = false;
+    chatIdForWallet = null;
   } else if (text && text.startsWith('0x') && text.match(/^0x[a-fA-F0-9]{40}\s+.+$/)) {
     // Handle single wallet addition
     const [address, ...nameParts] = text.split(' ');
     const name = nameParts.join(' ').trim();
     if (address.startsWith('0x') && address.length === 42) {
       addresses[address.toLowerCase()] = name;
-      bot.sendMessage(chatIdForWallet, `Wallet ${name} with address ${address} has been added successfully.`).then(() => {
-        logs.push(`Wallet ${name} added successfully`);
-        console.log(`Wallet ${name} with address ${address} has been added successfully.`);
-        waitingForWalletInfo = false; // Reset after handling wallet info
-        chatIdForWallet = null;
-      }).catch((error) => {
-        console.error("Failed to send wallet added confirmation:", error.message);
-      });
+      bot.sendMessage(chatIdForWallet, `Wallet ${name} with address ${address} has been added successfully.`);
+      logs.push(`Wallet ${name} added successfully`);
+      console.log(`Wallet ${name} with address ${address} has been added successfully.`);
+      waitingForWalletInfo = false; // Reset after handling wallet info
+      chatIdForWallet = null;
     } else {
-      bot.sendMessage(chatIdForWallet, "Invalid address format. Please make sure it starts with '0x'.").catch((error) => {
-        console.error("Failed to send invalid address format message:", error.message);
-      });
+      bot.sendMessage(chatIdForWallet, "Invalid address format. Please make sure it starts with '0x'.");
       logs.push("Invalid address format provided");
       console.warn("Invalid address format provided");
     }
   } else {
-    bot.sendMessage(chatIdForWallet, "Invalid input format. Please use the format: <address> <name>").catch((error) => {
-      console.error("Failed to send invalid input format message:", error.message);
-    });
+    bot.sendMessage(chatIdForWallet, "Invalid input format. Please use the format: <address> <name>");
     logs.push("Invalid input format provided");
     console.warn("Invalid input format provided");
   }
@@ -229,20 +176,14 @@ bot.onText(/\/balances/, async (msg) => {
   const chatId = msg.chat.id;
   const numberOfAddresses = Object.keys(addresses).length;
   const estimatedTime = numberOfAddresses * 2;
-  bot.sendMessage(chatId, `Calculating Balance:👩‍💻 est. ${estimatedTime} seconds 👩‍💻`).then(() => {
-    logs.push("Balances command received");
-    console.log("Balances command received");
-  }).catch((error) => {
-    console.error("Failed to send balance calculation message:", error.message);
-  });
+  bot.sendMessage(chatId, `Calculating Balance:👩‍💻 est. ${estimatedTime} seconds 👩‍💻`);
 
+  logs.push("Balances command received");
+  console.log("Balances command received");
   const balanceReport = await fetchWalletBalances();
-  bot.sendMessage(chatId, balanceReport).then(() => {
-    logs.push("Balances report sent successfully");
-    console.log("Balances report sent successfully");
-  }).catch((error) => {
-    console.error("Failed to send balance report:", error.message);
-  });
+  bot.sendMessage(chatId, balanceReport);
+  logs.push("Balances report sent successfully");
+  console.log("Balances report sent successfully");
 });
 
 // Enhanced logging for Telegram bot setup
@@ -402,5 +343,10 @@ app.get('/', (req, res) => {
   res.send('Welcome to the Telegram Bot Server');
 });
 
+// Start the server LOCAL
+app.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
+});
+
 // Vercel export
-module.exports = app;
+//module.exports = app;
