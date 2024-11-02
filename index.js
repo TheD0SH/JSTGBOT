@@ -343,10 +343,10 @@ app.get('/', (req, res) => {
   res.send('Welcome to the Telegram Bot Server');
 });
 
-// Start the server LOCAL
-app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
-});
+// Remove local server start for Vercel compatibility
+// app.listen(PORT, () => {
+//   console.log(`Server is running on port ${PORT}`);
+// });
 
 // Vercel export
-//module.exports = app;
+module.exports = app;
