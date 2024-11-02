@@ -21,20 +21,27 @@ const URL = process.env.URL;
 // Create a Telegram bot instance without polling
 const bot = new TelegramBot(TELEGRAM_TOKEN);
 
-// Set up the webhook with the Telegram API
-axios.post(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/setWebhook`, {
-  url: `${URL}/bot${TELEGRAM_TOKEN}`
-})
-.then((response) => {
-  console.log("Webhook set successfully:", response.data);
-})
-.catch((error) => {
-  console.error("Error setting webhook:", error.message);
-});
+// Function to set up the webhook with the Telegram API
+const setTelegramWebhook = async () => {
+  try {
+    const response = await axios.post(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/setWebhook`, {
+      url: `${URL}/bot${TELEGRAM_TOKEN}`
+    });
+    console.log("Webhook set successfully:", response.data);
+  } catch (error) {
+    console.error("Error setting webhook:", error.message);
+  }
+};
+
+// Call the webhook setup function after exporting the app
+setTelegramWebhook();
 
 // Handle incoming webhook updates
 app.post(`/bot${TELEGRAM_TOKEN}`, (req, res) => {
-  console.log("Incoming webhook received:", req.body); // Debug log to verify webhook receipt
+  console.log("Incoming webhook received:", JSON.stringify(req.body, null, 2)); // Debug log to verify webhook receipt
+  if (req.body.message) {
+    console.log("Message:", req.body.message);
+  }
   bot.processUpdate(req.body);
   res.sendStatus(200);
 });
@@ -342,11 +349,6 @@ app.get('/logs', (req, res) => {
 app.get('/', (req, res) => {
   res.send('Welcome to the Telegram Bot Server');
 });
-
-// Remove local server start for Vercel compatibility
-// app.listen(PORT, () => {
-//   console.log(`Server is running on port ${PORT}`);
-// });
 
 // Vercel export
 module.exports = app;
