@@ -40,10 +40,17 @@ setTelegramWebhook();
 app.post(`/bot${TELEGRAM_TOKEN}`, (req, res) => {
   console.log("Incoming webhook received:", JSON.stringify(req.body, null, 2)); // Debug log to verify webhook receipt
   if (req.body.message) {
-    console.log("Message:", req.body.message);
+    console.log("Message received from Telegram:", req.body.message);
+  } else {
+    console.warn("Webhook received but no message found in payload:", JSON.stringify(req.body, null, 2));
   }
-  bot.processUpdate(req.body);
-  res.sendStatus(200);
+  try {
+    bot.processUpdate(req.body);
+    res.sendStatus(200);
+  } catch (error) {
+    console.error("Error processing update:", error.message);
+    res.sendStatus(500);
+  }
 });
 
 // In-memory storage for wallet addresses and logs
@@ -108,25 +115,35 @@ bot.onText(/\/start/, (msg) => {
                        "/addbulk - Add wallets in bulk. Format: <address> <name> pairs separated by tabs or new lines\n" +
                        "/balances - Get the latest balance report of all added wallets\n" +
                        "/logs - View activity logs (admin only).";
-  bot.sendMessage(chatId, startMessage);
-  logs.push("Start command received and replied successfully");
+  bot.sendMessage(chatId, startMessage).then(() => {
+    logs.push("Start command received and replied successfully");
+    console.log("Start command processed successfully");
+  }).catch((error) => {
+    console.error("Failed to send start command response:", error.message);
+  });
 });
 
 // Command handler for adding a wallet
 bot.onText(/\/addwallet/, (msg) => {
   chatIdForWallet = msg.chat.id;
-  bot.sendMessage(chatIdForWallet, "Please provide the wallet address and name in the format: <address> <name>");
-  logs.push("Add wallet request message sent");
-  waitingForWalletInfo = true;
+  bot.sendMessage(chatIdForWallet, "Please provide the wallet address and name in the format: <address> <name>").then(() => {
+    logs.push("Add wallet request message sent");
+    waitingForWalletInfo = true;
+  }).catch((error) => {
+    console.error("Failed to send add wallet request message:", error.message);
+  });
 });
 
 // Command handler for adding wallets in bulk
 bot.onText(/\/addbulk/, (msg) => {
   const chatId = msg.chat.id;
-  bot.sendMessage(chatId, "Please provide the wallet address and name pairs, separated by tabs or new lines.");
-  waitingForWalletInfo = true;
-  chatIdForWallet = chatId;
-  logs.push("Add bulk wallets request message sent");
+  bot.sendMessage(chatId, "Please provide the wallet address and name pairs, separated by tabs or new lines.").then(() => {
+    waitingForWalletInfo = true;
+    chatIdForWallet = chatId;
+    logs.push("Add bulk wallets request message sent");
+  }).catch((error) => {
+    console.error("Failed to send add bulk wallets request message:", error.message);
+  });
 });
 
 // Handle wallet input only when requested
@@ -152,27 +169,37 @@ bot.on('message', (msg) => {
         console.warn(`Invalid address format provided in bulk: ${line}`);
       }
     });
-    bot.sendMessage(chatIdForWallet, `Bulk wallets have been added successfully.`);
-    waitingForWalletInfo = false;
-    chatIdForWallet = null;
+    bot.sendMessage(chatIdForWallet, `Bulk wallets have been added successfully.`).then(() => {
+      waitingForWalletInfo = false;
+      chatIdForWallet = null;
+    }).catch((error) => {
+      console.error("Failed to send bulk wallets added confirmation:", error.message);
+    });
   } else if (text && text.startsWith('0x') && text.match(/^0x[a-fA-F0-9]{40}\s+.+$/)) {
     // Handle single wallet addition
     const [address, ...nameParts] = text.split(' ');
     const name = nameParts.join(' ').trim();
     if (address.startsWith('0x') && address.length === 42) {
       addresses[address.toLowerCase()] = name;
-      bot.sendMessage(chatIdForWallet, `Wallet ${name} with address ${address} has been added successfully.`);
-      logs.push(`Wallet ${name} added successfully`);
-      console.log(`Wallet ${name} with address ${address} has been added successfully.`);
-      waitingForWalletInfo = false; // Reset after handling wallet info
-      chatIdForWallet = null;
+      bot.sendMessage(chatIdForWallet, `Wallet ${name} with address ${address} has been added successfully.`).then(() => {
+        logs.push(`Wallet ${name} added successfully`);
+        console.log(`Wallet ${name} with address ${address} has been added successfully.`);
+        waitingForWalletInfo = false; // Reset after handling wallet info
+        chatIdForWallet = null;
+      }).catch((error) => {
+        console.error("Failed to send wallet added confirmation:", error.message);
+      });
     } else {
-      bot.sendMessage(chatIdForWallet, "Invalid address format. Please make sure it starts with '0x'.");
+      bot.sendMessage(chatIdForWallet, "Invalid address format. Please make sure it starts with '0x'.").catch((error) => {
+        console.error("Failed to send invalid address format message:", error.message);
+      });
       logs.push("Invalid address format provided");
       console.warn("Invalid address format provided");
     }
   } else {
-    bot.sendMessage(chatIdForWallet, "Invalid input format. Please use the format: <address> <name>");
+    bot.sendMessage(chatIdForWallet, "Invalid input format. Please use the format: <address> <name>").catch((error) => {
+      console.error("Failed to send invalid input format message:", error.message);
+    });
     logs.push("Invalid input format provided");
     console.warn("Invalid input format provided");
   }
@@ -183,14 +210,20 @@ bot.onText(/\/balances/, async (msg) => {
   const chatId = msg.chat.id;
   const numberOfAddresses = Object.keys(addresses).length;
   const estimatedTime = numberOfAddresses * 2;
-  bot.sendMessage(chatId, `Calculating Balance:👩‍💻 est. ${estimatedTime} seconds 👩‍💻`);
+  bot.sendMessage(chatId, `Calculating Balance:👩‍💻 est. ${estimatedTime} seconds 👩‍💻`).then(() => {
+    logs.push("Balances command received");
+    console.log("Balances command received");
+  }).catch((error) => {
+    console.error("Failed to send balance calculation message:", error.message);
+  });
 
-  logs.push("Balances command received");
-  console.log("Balances command received");
   const balanceReport = await fetchWalletBalances();
-  bot.sendMessage(chatId, balanceReport);
-  logs.push("Balances report sent successfully");
-  console.log("Balances report sent successfully");
+  bot.sendMessage(chatId, balanceReport).then(() => {
+    logs.push("Balances report sent successfully");
+    console.log("Balances report sent successfully");
+  }).catch((error) => {
+    console.error("Failed to send balance report:", error.message);
+  });
 });
 
 // Enhanced logging for Telegram bot setup
