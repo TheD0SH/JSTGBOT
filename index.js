@@ -3,6 +3,7 @@ const express = require('express');
 const axios = require('axios');
 dotenv = require('dotenv');
 const TelegramBot = require('node-telegram-bot-api');
+const NodeCache = require('node-cache');
 
 // Load environment variables from .env file
 dotenv.config();
@@ -20,10 +21,19 @@ const URL = process.env.URL;
 const bot = new TelegramBot(TELEGRAM_TOKEN);
 
 // Set up the webhook with the Telegram API
-bot.setWebHook(`${URL}/bot${TELEGRAM_TOKEN}`);
+axios.post(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/setWebhook`, {
+  url: `${URL}/bot${TELEGRAM_TOKEN}`
+})
+.then((response) => {
+  console.log("Webhook set successfully:", response.data);
+})
+.catch((error) => {
+  console.error("Error setting webhook:", error.message);
+});
 
 // Handle incoming webhook updates
 app.post(`/bot${TELEGRAM_TOKEN}`, (req, res) => {
+  console.log("Incoming webhook received:", req.body); // Debug log to verify webhook receipt
   bot.processUpdate(req.body);
   res.sendStatus(200);
 });
@@ -31,6 +41,7 @@ app.post(`/bot${TELEGRAM_TOKEN}`, (req, res) => {
 // In-memory storage for wallet addresses and logs
 const addresses = {};
 const logs = [];
+const cache = new NodeCache({ stdTTL: 300 }); // Cache with 5 minutes TTL
 
 // Function to get CAD exchange rate
 const getCadExchangeRate = async () => {
@@ -76,6 +87,7 @@ let chatIdForWallet = null;
 
 // Command handler for starting the bot
 bot.onText(/\/start/, (msg) => {
+  console.log("Received /start command from Telegram"); // Extra debug log to verify handler is triggered
   const chatId = msg.chat.id;
   const startMessage = "Welcome to the Crypto Balance Bot!\n\nCommands you can use:\n" +
                        "/addwallet - Add a new wallet. Format: <address> <name>\n" +
@@ -168,8 +180,16 @@ bot.onText(/\/balances/, async (msg) => {
 });
 
 // Enhanced logging for Telegram bot setup
+bot.on('polling_error', (error) => {
+  console.error(`Polling error: ${error.code}, ${error.message}`);
+});
+
+bot.on('webhook_error', (error) => {
+  console.error(`Webhook error: ${error.message}`);
+});
+
 bot.on('error', (error) => {
-  console.error(`General error: ${error.message}`);
+  console.error(`General error from Telegram bot: ${error.message}`, error);
 });
 
 // Log when bot starts successfully
@@ -225,50 +245,33 @@ const fetchWalletBalances = async () => {
     totalBalance[address.toLowerCase()] = 0;
   }
 
-  for (let baseUrlInfo of baseUrls) {
-    for (let address in addresses) {
-      try {
-        const response = await axios.get(baseUrlInfo.url.replace("{}", address));
-        console.log(`API response from ${baseUrlInfo.url}:`, response.data); // Log entire response for debugging
+  // Batch addresses for API requests
+  const addressChunks = chunkArray(Object.keys(addresses), 20); // Split addresses into chunks of 20 for batch processing
 
-        if (response.status === 200 && response.data.result) {
-          if (typeof response.data.result === 'string') {
-            // Handle case where result is a string (single token balance)
-            const balance = parseFloat(response.data.result) / (10 ** 18);
-            if (balance === 0) {
-              logs.push(`No balance for ${baseUrlInfo.type} token at address ${address}`);
-              console.log(`No balance for ${baseUrlInfo.type} token at address ${address}`);
-            } else {
-              totalBalance[address.toLowerCase()] += balance;
-              totalETH += balance;
-              logs.push(`Converted balance for ${address} from ${baseUrlInfo.type}: ${balance}`);
-              console.log(`Converted balance for ${address} from ${baseUrlInfo.type}: ${balance}`);
-            }
-          } else if (Array.isArray(response.data.result)) {
-            // Handle case where result is an array (multiple balances)
-            response.data.result.forEach(entry => {
-              const balance = parseFloat(entry.balance) / (10 ** 18);
-              if (balance === 0) {
-                logs.push(`No balance for ${baseUrlInfo.type} token at address ${address}`);
-                console.log(`No balance for ${baseUrlInfo.type} token at address ${address}`);
-              } else {
-                totalBalance[address.toLowerCase()] += balance;
-                totalETH += balance;
-                logs.push(`Converted balance for ${address} from ${baseUrlInfo.type}: ${balance}`);
-                console.log(`Converted balance for ${address} from ${baseUrlInfo.type}: ${balance}`);
-              }
-            });
+  for (let baseUrlInfo of baseUrls) {
+    for (let chunk of addressChunks) {
+      const cacheKey = `${baseUrlInfo.url}_${chunk.join()}`;
+      const cachedResult = cache.get(cacheKey);
+
+      if (cachedResult) {
+        console.log(`Cache hit for ${cacheKey}`);
+        updateBalances(cachedResult, chunk, totalBalance, totalETH, baseUrlInfo);
+      } else {
+        try {
+          const response = await axios.get(baseUrlInfo.url.replace("{}", chunk.join(',')));
+          console.log(`API response from ${baseUrlInfo.url}:`, response.data); // Log entire response for debugging
+
+          if (response.status === 200 && response.data.result) {
+            cache.set(cacheKey, response.data.result); // Cache the result for 5 minutes
+            updateBalances(response.data.result, chunk, totalBalance, totalETH, baseUrlInfo);
           } else {
-            logs.push(`Unexpected response structure from ${baseUrlInfo.url}`);
-            console.error(`Unexpected response structure from ${baseUrlInfo.url}`);
+            logs.push(`Invalid response structure from ${baseUrlInfo.url}`);
+            console.error(`Invalid response structure from ${baseUrlInfo.url}`);
           }
-        } else {
-          logs.push(`Invalid response structure from ${baseUrlInfo.url}`);
-          console.error(`Invalid response structure from ${baseUrlInfo.url}`);
+        } catch (error) {
+          logs.push(`Failed to fetch data for addresses ${chunk} from ${baseUrlInfo.url}: ${error.message}`);
+          console.error(`Failed to fetch data for addresses ${chunk} from ${baseUrlInfo.url}: ${error.message}`);
         }
-      } catch (error) {
-        logs.push(`Failed to fetch data for address ${address} from ${baseUrlInfo.url}: ${error.message}`);
-        console.error(`Failed to fetch data for address ${address} from ${baseUrlInfo.url}: ${error.message}`);
       }
     }
   }
@@ -291,6 +294,47 @@ const fetchWalletBalances = async () => {
   return balanceReport;
 };
 
+// Helper function to update balances
+const updateBalances = (result, chunk, totalBalance, totalETH, baseUrlInfo) => {
+  if (typeof result === 'string') {
+    // Handle case where result is a string (single token balance)
+    const balance = parseFloat(result) / (10 ** 18);
+    chunk.forEach(address => {
+      totalBalance[address.toLowerCase()] += balance;
+      totalETH += balance;
+      logs.push(`Converted balance for ${address} from ${baseUrlInfo.type}: ${balance}`);
+      console.log(`Converted balance for ${address} from ${baseUrlInfo.type}: ${balance}`);
+    });
+  } else if (Array.isArray(result)) {
+    // Handle case where result is an array (multiple balances)
+    result.forEach(entry => {
+      const balance = parseFloat(entry.balance) / (10 ** 18);
+      const address = entry.account ? entry.account.toLowerCase() : entry.address.toLowerCase();
+      if (balance === 0) {
+        logs.push(`No balance for ${baseUrlInfo.type} token at address ${address}`);
+        console.log(`No balance for ${baseUrlInfo.type} token at address ${address}`);
+      } else {
+        totalBalance[address] += balance;
+        totalETH += balance;
+        logs.push(`Converted balance for ${address} from ${baseUrlInfo.type}: ${balance}`);
+        console.log(`Converted balance for ${address} from ${baseUrlInfo.type}: ${balance}`);
+      }
+    });
+  } else {
+    logs.push(`Unexpected response structure`);
+    console.error(`Unexpected response structure`);
+  }
+};
+
+// Helper function to chunk array into smaller arrays
+const chunkArray = (array, size) => {
+  const chunked = [];
+  for (let i = 0; i < array.length; i += size) {
+    chunked.push(array.slice(i, i + size));
+  }
+  return chunked;
+};
+
 // Endpoint to display logs
 app.get('/logs', (req, res) => {
   res.send(`<pre>${logs.join('<br>')}</pre>`);
@@ -302,9 +346,9 @@ app.get('/', (req, res) => {
 });
 
 // Start the server LOCAL
-// app.listen(PORT, () => {
-//   console.log(`Server is running on port ${PORT}`);
-// });
+ app.listen(PORT, () => {
+   console.log(`Server is running on port ${PORT}`);
+});
 
 // Vercel export
-module.exports = app;
+//module.exports = app;
